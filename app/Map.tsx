@@ -3,15 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import type { LatLngLiteral } from "leaflet";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import {
-  addDoc,
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-} from "firebase/firestore";
+
+import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp } from "firebase/firestore";
 import { db } from "./firebase";
 
 type Ratings = {
@@ -96,110 +91,186 @@ const defaultRatings: Ratings = {
   backgroundMusic: false,
 };
 
-// ✅ Leaflet Map dynamisch laden (kein SSR)
-const LeafletMap = dynamic(async () => {
-  const mod = await import("react-leaflet");
-  const { MapContainer, TileLayer, Marker, Popup, useMapEvents } = mod;
+// ----- Marker Icons (score als runde Badge, farbig)
+function scoreColor(score: number) {
+  if (score >= 8) return "#1fd17b";
+  if (score >= 6) return "#7bdc3a";
+  if (score >= 4) return "#f5c542";
+  if (score >= 2) return "#f08c3c";
+  return "#ff4d4d";
+}
 
-  function ClickToDraft({ onDraft }: { onDraft: (p: LatLngLiteral) => void }) {
-    useMapEvents({
-      click(e) {
-        onDraft(e.latlng);
-      },
-    });
-    return null;
-  }
+function makeScoreIcon(score: number) {
+  const c = scoreColor(score);
+  const s = Math.round(score);
+  return L.divIcon({
+    className: "score-pin",
+    html: `
+      <div style="
+        width: 34px; height: 34px;
+        border-radius: 999px;
+        background: ${c};
+        display:flex; align-items:center; justify-content:center;
+        color: #0b0b0b; font-weight: 900; font-size: 14px;
+        border: 2px solid rgba(255,255,255,0.85);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+      ">${s}</div>
+    `,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
+}
 
-  return function LeafletMapInner(props: {
-    spots: Spot[];
-    draft: LatLngLiteral | null;
-    onDraft: (p: LatLngLiteral) => void;
-    markerIcon: any; // Leaflet.Icon | null
-  }) {
-    const icon = props.markerIcon || undefined;
+function makeDraftIcon() {
+  return L.divIcon({
+    className: "draft-pin",
+    html: `
+      <div style="
+        width: 34px; height: 34px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.15);
+        display:flex; align-items:center; justify-content:center;
+        color: white; font-weight: 900; font-size: 16px;
+        border: 2px dashed rgba(255,255,255,0.85);
+      ">+</div>
+    `,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
+}
 
-    return (
-      <MapContainer
-        center={defaultCenter}
-        zoom={13}
-        style={{ height: "70vh", width: "100%" }}
-      >
-        <TileLayer
-          attribution="&copy; OpenStreetMap"
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+// ✅ Leaflet dynamisch laden (SSR-safe)
+const LeafletMap = dynamic(
+  async () => {
+    const mod = await import("react-leaflet");
+    const { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } = mod;
 
-        <ClickToDraft onDraft={props.onDraft} />
+    function ClickToDraft({ onDraft }: { onDraft: (p: LatLngLiteral) => void }) {
+      useMapEvents({
+        click(e) {
+          onDraft(e.latlng);
+        },
+      });
+      return null;
+    }
 
-        {props.spots.map((s) => (
-          <Marker
-            key={s.id}
-            position={[s.lat, s.lng]}
-            icon={icon}
-          >
-            <Popup>
-              <b>{s.name}</b>
-              <div>Score: {s.score}/10</div>
-              {s.comment ? <div>{s.comment}</div> : null}
-            </Popup>
-          </Marker>
-        ))}
+    function FlyToController({ flyTo }: { flyTo: LatLngLiteral | null }) {
+      const map = useMap();
+      useEffect(() => {
+        if (!flyTo) return;
+        map.flyTo([flyTo.lat, flyTo.lng], Math.max(map.getZoom(), 16), { duration: 0.6 });
+      }, [flyTo, map]);
+      return null;
+    }
 
-        {props.draft ? (
-          <Marker position={[props.draft.lat, props.draft.lng]} icon={icon}>
-            <Popup>Neuer Spot</Popup>
-          </Marker>
-        ) : null}
-      </MapContainer>
-    );
-  };
-}, { ssr: false });
+    return function LeafletMapInner(props: {
+      spots: Spot[];
+      draft: LatLngLiteral | null;
+      onDraft: (p: LatLngLiteral) => void;
+      flyTo: LatLngLiteral | null;
+    }) {
+      return (
+        <MapContainer center={defaultCenter} zoom={13} className="mapCanvas">
+          <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <ClickToDraft onDraft={props.onDraft} />
+          <FlyToController flyTo={props.flyTo} />
+
+          {props.spots.map((s) => (
+            <Marker key={s.id} position={[s.lat, s.lng]} icon={makeScoreIcon(s.score)}>
+              <Popup>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div>
+                    <b style={{ fontSize: 14 }}>{s.name}</b>
+                    <div style={{ opacity: 0.85 }}>
+                      Score: <b>{s.score}/10</b>
+                    </div>
+                  </div>
+                  {s.comment ? <div style={{ opacity: 0.9 }}>{s.comment}</div> : null}
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+
+          {props.draft ? (
+            <Marker position={[props.draft.lat, props.draft.lng]} icon={makeDraftIcon()}>
+              <Popup>Neuer Spot</Popup>
+            </Marker>
+          ) : null}
+        </MapContainer>
+      );
+    };
+  },
+  { ssr: false }
+);
 
 export default function Map() {
   const [spots, setSpots] = useState<Spot[]>([]);
   const [draft, setDraft] = useState<LatLngLiteral | null>(null);
+  const [flyTo, setFlyTo] = useState<LatLngLiteral | null>(null);
 
   const [name, setName] = useState("");
   const [comment, setComment] = useState("");
   const [ratings, setRatings] = useState<Ratings>({ ...defaultRatings });
 
+  // Suche
+  const [searchText, setSearchText] = useState("");
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
   const preview = useMemo(() => computeScore(ratings), [ratings]);
-
-  // ✅ Marker-Icon erst im Browser erzeugen (fix für "window is not defined")
-  const [markerIcon, setMarkerIcon] = useState<any>(null);
-
-  useEffect(() => {
-    (async () => {
-      const L = (await import("leaflet")).default;
-
-      setMarkerIcon(
-        new L.Icon({
-          iconUrl:
-            "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-          iconRetinaUrl:
-            "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-          shadowUrl:
-            "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-          iconSize: [25, 41],
-          iconAnchor: [12, 41],
-          popupAnchor: [1, -34],
-          shadowSize: [41, 41],
-        })
-      );
-    })();
-  }, []);
 
   // ✅ Live aus Firestore laden
   useEffect(() => {
-    const q = query(collection(db, "spots"), orderBy("createdAt", "desc"));
-    return onSnapshot(q, (snap) => {
+    const qy = query(collection(db, "spots"), orderBy("createdAt", "desc"));
+    return onSnapshot(qy, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Spot[];
       setSpots(list);
     });
   }, []);
 
+  async function zoomToMyLocation() {
+    if (!navigator.geolocation) return alert("Geolocation nicht verfügbar.");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setFlyTo(p);
+      },
+      () => alert("Standort konnte nicht abgerufen werden (Berechtigung?)."),
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  }
+
+  async function searchAndZoom() {
+    const q = searchText.trim();
+    if (!q) return;
+
+    setSearchBusy(true);
+    setSearchError(null);
+
+    try {
+      // OSM Nominatim (free) – nicht spammen
+      const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(q);
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!res.ok) throw new Error("Suche fehlgeschlagen");
+
+      const data = (await res.json()) as Array<{ lat: string; lon: string }>;
+      if (!data.length) {
+        setSearchError("Nichts gefunden.");
+        return;
+      }
+
+      const p = { lat: Number(data[0].lat), lng: Number(data[0].lon) };
+      setFlyTo(p);
+      setDraft(p); // optional: direkt als Draft setzen
+    } catch (e: any) {
+      setSearchError(e?.message ?? "Fehler bei Suche");
+    } finally {
+      setSearchBusy(false);
+    }
+  }
+
   async function saveSpot() {
-    if (!draft) return alert("Klick erst auf die Karte.");
+    if (!draft) return alert("Klick erst auf die Karte oder nutz die Suche.");
     const cleanName = name.trim();
     if (!cleanName) return alert("Bitte Ort/Name eingeben.");
 
@@ -222,224 +293,173 @@ export default function Map() {
   }
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "1.4fr 1fr",
-        gap: 16,
-        alignItems: "start",
-      }}
-    >
-      <div
-        style={{
-          borderRadius: 16,
-          overflow: "hidden",
-          border: "1px solid rgba(255,255,255,0.12)",
-        }}
-      >
-        <LeafletMap
-          spots={spots}
-          draft={draft}
-          onDraft={setDraft}
-          markerIcon={markerIcon}
-        />
-      </div>
+    <>
+      <style jsx global>{`
+        .layout {
+          display: grid;
+          grid-template-columns: 1.25fr 1fr;
+          gap: 16px;
+          align-items: start;
+        }
 
-      <div
-        style={{
-          padding: 14,
-          borderRadius: 16,
-          border: "1px solid rgba(255,255,255,0.12)",
-          background: "rgba(255,255,255,0.03)",
-          display: "grid",
-          gap: 10,
-        }}
-      >
-        <div style={{ fontWeight: 900, fontSize: 16 }}>Neuen Spot eintragen</div>
+        .panel {
+          padding: 14px;
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(255, 255, 255, 0.03);
+          display: grid;
+          gap: 10px;
+        }
 
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Ort/Name"
-          style={inputStyle}
-        />
-        <input
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="Kommentar (optional)"
-          style={inputStyle}
-        />
+        .mapWrap {
+          border-radius: 16px;
+          overflow: hidden;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+        }
 
-        <div style={sectionTitle}>4 Noten (1–10)</div>
-        <NumberRow
-          label="1. Erster Eindruck"
-          value={ratings.note1}
-          onChange={(v) => setRatings({ ...ratings, note1: v })}
-        />
-        <NumberRow
-          label="2. Waschbereich"
-          value={ratings.note2}
-          onChange={(v) => setRatings({ ...ratings, note2: v })}
-        />
-        <NumberRow
-          label="3. WC-Kabine"
-          value={ratings.note3}
-          onChange={(v) => setRatings({ ...ratings, note3: v })}
-        />
-        <NumberRow
-          label="4. Raumklima & Komfort"
-          value={ratings.note4}
-          onChange={(v) => setRatings({ ...ratings, note4: v })}
-        />
+        .mapCanvas {
+          height: 74vh;
+          width: 100%;
+        }
 
-        <div style={sectionTitle}>Harte Regeln / K.O.</div>
-        <ToggleRow
-          label="Toilettenpapier vorhanden?"
-          checked={ratings.hasToiletPaper}
-          onChange={(c) => setRatings({ ...ratings, hasToiletPaper: c })}
-        />
-        <ToggleRow
-          label="Seife vorhanden?"
-          checked={ratings.soapPresent}
-          onChange={(c) => setRatings({ ...ratings, soapPresent: c })}
-        />
-        <ToggleRow
-          label="Trocknung vorhanden?"
-          checked={ratings.dryingPresent}
-          onChange={(c) => setRatings({ ...ratings, dryingPresent: c })}
-        />
-        <SelectRow
-          label="Sichtbare WC-Verschmutzung"
-          value={ratings.visibleWcDirtPenalty}
-          onChange={(v) => setRatings({ ...ratings, visibleWcDirtPenalty: v })}
-        />
-        <ToggleRow
-          label="Funktions-K.O."
-          checked={ratings.majorFunctionKO}
-          onChange={(c) => setRatings({ ...ratings, majorFunctionKO: c })}
-        />
-
-        <div style={sectionTitle}>Bedingungen</div>
-        <ToggleRow
-          label="Lufttrocknung (−1)"
-          checked={ratings.airDrying}
-          onChange={(c) => setRatings({ ...ratings, airDrying: c })}
-        />
-        <ToggleRow
-          label="Einlagiges Papier (−1)"
-          checked={ratings.singlePlyPaper}
-          onChange={(c) => setRatings({ ...ratings, singlePlyPaper: c })}
-        />
-        <ToggleRow
-          label="Kontaktlos reinigen (+1)"
-          checked={ratings.contactlessCleaningPossible}
-          onChange={(c) =>
-            setRatings({ ...ratings, contactlessCleaningPossible: c })
+        /* ✅ Mobile: untereinander + Map groß */
+        @media (max-width: 860px) {
+          .layout {
+            grid-template-columns: 1fr;
           }
-        />
-        <ToggleRow
-          label="Klobrillen-Reiniger (+1)"
-          checked={ratings.seatCleanerAvailable}
-          onChange={(c) => setRatings({ ...ratings, seatCleanerAvailable: c })}
-        />
-        <ToggleRow
-          label="Musik (+1)"
-          checked={ratings.backgroundMusic}
-          onChange={(c) => setRatings({ ...ratings, backgroundMusic: c })}
-        />
+          .mapCanvas {
+            height: 52vh;
+          }
+        }
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <div style={{ fontWeight: 900 }}>Vorschau: {preview.score}/10</div>
-          <button onClick={saveSpot} style={buttonStyle}>
-            Spot speichern
-          </button>
+        /* ✅ Sehr klein (iPhone): bisschen mehr Höhe + komfortable Buttons */
+        @media (max-width: 420px) {
+          .mapCanvas {
+            height: 56vh;
+          }
+          .btnRow {
+            flex-direction: column;
+          }
+          .btnRow button {
+            width: 100%;
+          }
+        }
+      `}</style>
+
+      <div className="layout">
+        {/* MAP */}
+        <div className="mapWrap">
+          <LeafletMap spots={spots} draft={draft} onDraft={setDraft} flyTo={flyTo} />
+        </div>
+
+        {/* PANEL */}
+        <div className="panel">
+          <div style={{ fontWeight: 900, fontSize: 16 }}>Tools</div>
+
+          <div className="btnRow" style={{ display: "flex", gap: 10 }}>
+            <button onClick={zoomToMyLocation} style={buttonStyle}>
+              Zu meinem Standort
+            </button>
+            <button
+              onClick={() => setFlyTo({ lat: defaultCenter[0], lng: defaultCenter[1] })}
+              style={buttonGhostStyle}
+            >
+              Zurück (Standard)
+            </button>
+          </div>
+
+          <div style={sectionTitle}>Suche & Zoom</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder='z.B. "Aral Ingolstadt" oder Adresse'
+              style={{ ...inputStyle, flex: 1 }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") searchAndZoom();
+              }}
+            />
+            <button onClick={searchAndZoom} style={buttonStyle} disabled={searchBusy}>
+              {searchBusy ? "..." : "Suchen"}
+            </button>
+          </div>
+          {searchError ? <div style={{ color: "#ff8a8a", fontSize: 12 }}>{searchError}</div> : null}
+          <div style={{ fontSize: 12, opacity: 0.7 }}>
+            Hinweis: Suche setzt auch direkt den Draft-Pin, dann kannst du sofort speichern.
+          </div>
+
+          <hr style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.10)", margin: "8px 0" }} />
+
+          <div style={{ fontWeight: 900, fontSize: 16 }}>Neuen Spot eintragen</div>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>
+            1) Klick auf Karte / Suche → 2) Daten → 3) Speichern
+          </div>
+
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ort/Name" style={inputStyle} />
+          <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Kommentar (optional)" style={inputStyle} />
+
+          <div style={sectionTitle}>4 Noten (1–10)</div>
+          <NumberRow label="1. Erster Eindruck" value={ratings.note1} onChange={(v) => setRatings({ ...ratings, note1: v })} />
+          <NumberRow label="2. Waschbereich" value={ratings.note2} onChange={(v) => setRatings({ ...ratings, note2: v })} />
+          <NumberRow label="3. WC-Kabine" value={ratings.note3} onChange={(v) => setRatings({ ...ratings, note3: v })} />
+          <NumberRow label="4. Raumklima & Komfort" value={ratings.note4} onChange={(v) => setRatings({ ...ratings, note4: v })} />
+
+          <div style={sectionTitle}>Harte Regeln / K.O.</div>
+          <ToggleRow label="Toilettenpapier vorhanden?" checked={ratings.hasToiletPaper} onChange={(c) => setRatings({ ...ratings, hasToiletPaper: c })} />
+          <ToggleRow label="Seife vorhanden?" checked={ratings.soapPresent} onChange={(c) => setRatings({ ...ratings, soapPresent: c })} />
+          <ToggleRow label="Trocknung vorhanden?" checked={ratings.dryingPresent} onChange={(c) => setRatings({ ...ratings, dryingPresent: c })} />
+          <SelectRow label="Sichtbare WC-Verschmutzung" value={ratings.visibleWcDirtPenalty} onChange={(v) => setRatings({ ...ratings, visibleWcDirtPenalty: v })} />
+          <ToggleRow label="Funktions-K.O." checked={ratings.majorFunctionKO} onChange={(c) => setRatings({ ...ratings, majorFunctionKO: c })} />
+
+          <div style={sectionTitle}>Bedingungen</div>
+          <ToggleRow label="Lufttrocknung (−1)" checked={ratings.airDrying} onChange={(c) => setRatings({ ...ratings, airDrying: c })} />
+          <ToggleRow label="Einlagiges Papier (−1)" checked={ratings.singlePlyPaper} onChange={(c) => setRatings({ ...ratings, singlePlyPaper: c })} />
+          <ToggleRow label="Kontaktlos reinigen (+1)" checked={ratings.contactlessCleaningPossible} onChange={(c) => setRatings({ ...ratings, contactlessCleaningPossible: c })} />
+          <ToggleRow label="Klobrillen-Reiniger (+1)" checked={ratings.seatCleanerAvailable} onChange={(c) => setRatings({ ...ratings, seatCleanerAvailable: c })} />
+          <ToggleRow label="Musik (+1)" checked={ratings.backgroundMusic} onChange={(c) => setRatings({ ...ratings, backgroundMusic: c })} />
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+            <div style={{ fontWeight: 900 }}>Vorschau: {preview.score}/10</div>
+            <button onClick={saveSpot} style={buttonStyle}>
+              Spot speichern
+            </button>
+          </div>
+
+          <div style={{ fontSize: 12, opacity: 0.7 }}>
+            Wenn nichts speichert: erst Karte klicken oder Suche → dann Draft-Pin erscheint.
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
-function NumberRow({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-}) {
+function NumberRow({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ fontSize: 13, opacity: 0.9 }}>{label}</div>
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <input
-          type="range"
-          min={1}
-          max={10}
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
-          style={{ width: "100%" }}
-        />
-        <div style={{ width: 34, textAlign: "right", fontWeight: 900 }}>
-          {value}
-        </div>
+        <input type="range" min={1} max={10} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: "100%" }} />
+        <div style={{ width: 34, textAlign: "right", fontWeight: 900 }}>{value}</div>
       </div>
     </div>
   );
 }
 
-function ToggleRow({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (c: boolean) => void;
-}) {
+function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (c: boolean) => void }) {
   return (
-    <label
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        gap: 10,
-      }}
-    >
+    <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
       <span style={{ fontSize: 13, opacity: 0.9 }}>{label}</span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
     </label>
   );
 }
 
-function SelectRow({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: 0 | 1 | 2 | 3;
-  onChange: (v: 0 | 1 | 2 | 3) => void;
-}) {
+function SelectRow({ label, value, onChange }: { label: string; value: 0 | 1 | 2 | 3; onChange: (v: 0 | 1 | 2 | 3) => void }) {
   return (
     <label style={{ display: "grid", gap: 6 }}>
       <span style={{ fontSize: 13, opacity: 0.9 }}>{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value) as any)}
-        style={{ ...inputStyle, cursor: "pointer" }}
-      >
+      <select value={value} onChange={(e) => onChange(Number(e.target.value) as any)} style={{ ...inputStyle, cursor: "pointer" }}>
         <option value={0}>Keine</option>
         <option value={1}>-1 Punkt</option>
         <option value={2}>-2 Punkte</option>
@@ -450,8 +470,8 @@ function SelectRow({
 }
 
 const inputStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 12,
+  padding: "12px 12px",
+  borderRadius: 14,
   border: "1px solid rgba(255,255,255,0.12)",
   background: "rgba(0,0,0,0.25)",
   color: "white",
@@ -459,11 +479,21 @@ const inputStyle: React.CSSProperties = {
 };
 
 const buttonStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 12,
+  padding: "12px 12px",
+  borderRadius: 14,
   border: "1px solid rgba(255,255,255,0.18)",
   background: "white",
   color: "black",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const buttonGhostStyle: React.CSSProperties = {
+  padding: "12px 12px",
+  borderRadius: 14,
+  border: "1px solid rgba(255,255,255,0.18)",
+  background: "rgba(0,0,0,0.25)",
+  color: "white",
   fontWeight: 900,
   cursor: "pointer",
 };
