@@ -4,7 +4,16 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
-import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+} from "firebase/firestore";
 import { db } from "./firebase";
 
 type LatLngLiteral = {
@@ -33,11 +42,13 @@ type Spot = {
   id: string;
   name: string;
   comment: string;
+  author?: string;
   lat: number;
   lng: number;
   ratings: Ratings;
   score: number;
   createdAt?: any;
+  updatedAt?: any;
 };
 
 const defaultCenter: [number, number] = [48.765, 11.423];
@@ -158,6 +169,24 @@ function makeDraftIcon() {
   });
 }
 
+function formatFirestoreDate(value: any) {
+  if (!value) return "—";
+
+  try {
+    if (typeof value.toDate === "function") {
+      return value.toDate().toLocaleString("de-DE");
+    }
+
+    if (value.seconds) {
+      return new Date(value.seconds * 1000).toLocaleString("de-DE");
+    }
+
+    return "—";
+  } catch {
+    return "—";
+  }
+}
+
 function ClickToDraft({ onDraft }: { onDraft: (p: LatLngLiteral) => void }) {
   useMapEvents({
     click(e) {
@@ -184,6 +213,9 @@ export default function MapClient() {
   const [flyTo, setFlyTo] = useState<LatLngLiteral | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
 
+  const [editingSpotId, setEditingSpotId] = useState<string | null>(null);
+
+  const [author, setAuthor] = useState("");
   const [name, setName] = useState("");
   const [comment, setComment] = useState("");
   const [ratings, setRatings] = useState<Ratings>({ ...defaultRatings });
@@ -201,6 +233,36 @@ export default function MapClient() {
       setSpots(list);
     });
   }, []);
+
+  function resetForm() {
+    setEditingSpotId(null);
+    setAuthor("");
+    setName("");
+    setComment("");
+    setRatings({ ...defaultRatings });
+  }
+
+  function openCreateSheet() {
+    if (!draft) {
+      alert("Klick erst auf die Karte oder nutz die Suche.");
+      return;
+    }
+    resetForm();
+    setIsSheetOpen(true);
+  }
+
+  function openEditSheet(spot: Spot) {
+    setEditingSpotId(spot.id);
+    setDraft({ lat: spot.lat, lng: spot.lng });
+    setFlyTo({ lat: spot.lat, lng: spot.lng });
+
+    setAuthor(spot.author ?? "");
+    setName(spot.name ?? "");
+    setComment(spot.comment ?? "");
+    setRatings(spot.ratings ?? { ...defaultRatings });
+
+    setIsSheetOpen(true);
+  }
 
   async function zoomToMyLocation() {
     if (!navigator.geolocation) {
@@ -266,7 +328,14 @@ export default function MapClient() {
       return;
     }
 
+    const cleanAuthor = author.trim();
     const cleanName = name.trim();
+
+    if (!cleanAuthor) {
+      alert("Bitte Autor/Name eingeben.");
+      return;
+    }
+
     if (!cleanName) {
       alert("Bitte Ort/Name eingeben.");
       return;
@@ -274,19 +343,32 @@ export default function MapClient() {
 
     const { score } = computeScore(ratings);
 
-    await addDoc(collection(db, "spots"), {
-      name: cleanName,
-      comment: comment.trim(),
-      lat: draft.lat,
-      lng: draft.lng,
-      ratings,
-      score,
-      createdAt: serverTimestamp(),
-    });
+    if (editingSpotId) {
+      await updateDoc(doc(db, "spots", editingSpotId), {
+        author: cleanAuthor,
+        name: cleanName,
+        comment: comment.trim(),
+        lat: draft.lat,
+        lng: draft.lng,
+        ratings,
+        score,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await addDoc(collection(db, "spots"), {
+        author: cleanAuthor,
+        name: cleanName,
+        comment: comment.trim(),
+        lat: draft.lat,
+        lng: draft.lng,
+        ratings,
+        score,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
 
-    setName("");
-    setComment("");
-    setRatings({ ...defaultRatings });
+    resetForm();
     setDraft(null);
     setIsSheetOpen(false);
   }
@@ -366,6 +448,14 @@ export default function MapClient() {
           margin: 0 auto 8px auto;
         }
 
+        .popupMeta {
+          font-size: 12px;
+          opacity: 0.75;
+          display: grid;
+          gap: 2px;
+          margin-top: 4px;
+        }
+
         @media (max-width: 640px) {
           .mapCanvas {
             height: 78vh;
@@ -427,14 +517,30 @@ export default function MapClient() {
             {spots.map((s) => (
               <Marker key={s.id} position={[s.lat, s.lng]} icon={makeScoreIcon(s.score)}>
                 <Popup>
-                  <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ display: "grid", gap: 6, minWidth: 180 }}>
                     <div>
                       <b style={{ fontSize: 14 }}>{s.name}</b>
                       <div style={{ opacity: 0.85 }}>
                         Score: <b>{s.score}/10</b>
                       </div>
                     </div>
+
                     {s.comment ? <div style={{ opacity: 0.9 }}>{s.comment}</div> : null}
+
+                    <div className="popupMeta">
+                      <div>
+                        von: <b>{s.author || "Unbekannt"}</b>
+                      </div>
+                      <div>erstellt: {formatFirestoreDate(s.createdAt)}</div>
+                      <div>geändert: {formatFirestoreDate(s.updatedAt)}</div>
+                    </div>
+
+                    <button
+                      onClick={() => openEditSheet(s)}
+                      style={{ ...buttonGhostStyle, marginTop: 4 }}
+                    >
+                      Bearbeiten
+                    </button>
                   </div>
                 </Popup>
               </Marker>
@@ -456,7 +562,7 @@ export default function MapClient() {
               cursor: draft ? "pointer" : "not-allowed",
             }}
             disabled={!draft}
-            onClick={() => setIsSheetOpen(true)}
+            onClick={openCreateSheet}
           >
             Spot bewerten
           </button>
@@ -470,11 +576,20 @@ export default function MapClient() {
             <div className="sheetHandle" />
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-              <div style={{ fontWeight: 900, fontSize: 18 }}>Spot bewerten</div>
+              <div style={{ fontWeight: 900, fontSize: 18 }}>
+                {editingSpotId ? "Spot bearbeiten" : "Spot bewerten"}
+              </div>
               <button onClick={() => setIsSheetOpen(false)} style={buttonGhostStyle}>
                 Schließen
               </button>
             </div>
+
+            <input
+              value={author}
+              onChange={(e) => setAuthor(e.target.value)}
+              placeholder="Autor / Wer war hier?"
+              style={inputStyle}
+            />
 
             <input
               value={name}
@@ -482,6 +597,7 @@ export default function MapClient() {
               placeholder="Ort/Name"
               style={inputStyle}
             />
+
             <input
               value={comment}
               onChange={(e) => setComment(e.target.value)}
@@ -512,7 +628,7 @@ export default function MapClient() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <div style={{ fontWeight: 900 }}>Vorschau: {preview.score}/10</div>
               <button onClick={saveSpot} style={buttonStyle}>
-                Speichern
+                {editingSpotId ? "Update speichern" : "Speichern"}
               </button>
             </div>
           </div>
