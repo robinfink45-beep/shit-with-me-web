@@ -1,7 +1,7 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
 import {
@@ -49,6 +49,13 @@ type Spot = {
   score: number;
   createdAt?: any;
   updatedAt?: any;
+};
+
+type NotificationItem = {
+  id: string;
+  title: string;
+  lat: number;
+  lng: number;
 };
 
 const defaultCenter: [number, number] = [48.765, 11.423];
@@ -212,6 +219,7 @@ export default function MapClient() {
   const [draft, setDraft] = useState<LatLngLiteral | null>(null);
   const [flyTo, setFlyTo] = useState<LatLngLiteral | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [isBellOpen, setIsBellOpen] = useState(false);
 
   const [editingSpotId, setEditingSpotId] = useState<string | null>(null);
 
@@ -224,13 +232,41 @@ export default function MapClient() {
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+
   const preview = useMemo(() => computeScore(ratings), [ratings]);
+
+  const firstLoadRef = useRef(true);
+  const knownSpotIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const qy = query(collection(db, "spots"), orderBy("createdAt", "desc"));
     return onSnapshot(qy, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Spot[];
       setSpots(list);
+
+      const currentIds = new Set(list.map((s) => s.id));
+
+      if (firstLoadRef.current) {
+        knownSpotIdsRef.current = currentIds;
+        firstLoadRef.current = false;
+        return;
+      }
+
+      const newOnes = list.filter((spot) => !knownSpotIdsRef.current.has(spot.id));
+
+      if (newOnes.length > 0) {
+        const freshNotifications: NotificationItem[] = newOnes.map((spot) => ({
+          id: spot.id,
+          title: `${spot.author || "Jemand"} hat ${spot.name} eingetragen`,
+          lat: spot.lat,
+          lng: spot.lng,
+        }));
+
+        setNotifications((prev) => [...freshNotifications, ...prev]);
+      }
+
+      knownSpotIdsRef.current = currentIds;
     });
   }, []);
 
@@ -373,6 +409,16 @@ export default function MapClient() {
     setIsSheetOpen(false);
   }
 
+  function openNotification(item: NotificationItem) {
+    setFlyTo({ lat: item.lat, lng: item.lng });
+    setIsBellOpen(false);
+  }
+
+  function clearNotifications() {
+    setNotifications([]);
+    setIsBellOpen(false);
+  }
+
   return (
     <>
       <style jsx global>{`
@@ -381,7 +427,7 @@ export default function MapClient() {
           gap: 12px;
         }
 
-        .searchBarWrap {
+        .topBar {
           position: sticky;
           top: 0;
           z-index: 500;
@@ -392,6 +438,13 @@ export default function MapClient() {
           border: 1px solid rgba(255, 255, 255, 0.12);
           background: rgba(15, 15, 15, 0.92);
           backdrop-filter: blur(12px);
+        }
+
+        .topBarHeader {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
         }
 
         .searchRow {
@@ -456,6 +509,72 @@ export default function MapClient() {
           margin-top: 4px;
         }
 
+        .bellWrap {
+          position: relative;
+        }
+
+        .bellButton {
+          position: relative;
+          padding: 10px 12px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.18);
+          background: rgba(0,0,0,0.25);
+          color: white;
+          font-size: 20px;
+          cursor: pointer;
+        }
+
+        .bellBadge {
+          position: absolute;
+          top: -6px;
+          right: -6px;
+          min-width: 22px;
+          height: 22px;
+          padding: 0 6px;
+          border-radius: 999px;
+          background: #ff4d4d;
+          color: white;
+          font-size: 12px;
+          font-weight: 900;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 2px solid #111;
+        }
+
+        .bellDropdown {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          width: min(340px, 85vw);
+          max-height: 320px;
+          overflow: auto;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: #111;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+          padding: 10px;
+          display: grid;
+          gap: 8px;
+          z-index: 900;
+        }
+
+        .notificationItem {
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(255,255,255,0.04);
+          color: white;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .notificationEmpty {
+          padding: 10px 12px;
+          opacity: 0.7;
+          font-size: 13px;
+        }
+
         @media (max-width: 640px) {
           .mapCanvas {
             height: 78vh;
@@ -474,7 +593,47 @@ export default function MapClient() {
       `}</style>
 
       <div className="mobileMapLayout">
-        <div className="searchBarWrap">
+        <div className="topBar">
+          <div className="topBarHeader">
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Shit With Me</div>
+
+            <div className="bellWrap">
+              <button className="bellButton" onClick={() => setIsBellOpen((v) => !v)}>
+                🔔
+                {notifications.length > 0 ? (
+                  <span className="bellBadge">{notifications.length}</span>
+                ) : null}
+              </button>
+
+              {isBellOpen ? (
+                <div className="bellDropdown">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                    <div style={{ fontWeight: 900 }}>Benachrichtigungen</div>
+                    {notifications.length > 0 ? (
+                      <button onClick={clearNotifications} style={{ ...buttonGhostStyle, padding: "8px 10px" }}>
+                        Leeren
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {notifications.length === 0 ? (
+                    <div className="notificationEmpty">Keine neuen Benachrichtigungen.</div>
+                  ) : (
+                    notifications.map((item) => (
+                      <button
+                        key={item.id}
+                        className="notificationItem"
+                        onClick={() => openNotification(item)}
+                      >
+                        {item.title}
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
           <div className="searchRow">
             <input
               value={searchText}
