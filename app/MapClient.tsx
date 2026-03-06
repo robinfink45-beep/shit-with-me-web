@@ -103,28 +103,32 @@ function scoreColor(score: number) {
 
 function makeScoreIcon(score: number) {
   const c = scoreColor(score);
-  const s = Math.round(score);
 
   return L.divIcon({
-    className: "score-pin",
+    className: "poop-pin",
     html: `
       <div style="
-        width: 34px;
-        height: 34px;
-        border-radius: 999px;
-        background: ${c};
+        width: 42px;
+        height: 42px;
         display:flex;
         align-items:center;
         justify-content:center;
-        color:#0b0b0b;
-        font-weight:900;
-        font-size:14px;
-        border:2px solid rgba(255,255,255,0.85);
-        box-shadow:0 10px 25px rgba(0,0,0,0.35);
-      ">${s}</div>
+        font-size: 28px;
+        line-height: 1;
+        filter: drop-shadow(0 6px 12px rgba(0,0,0,0.35));
+      ">
+        <span style="
+          display:inline-block;
+          transform: translateY(-1px);
+          text-shadow:
+            0 0 0 ${c},
+            0 0 8px rgba(0,0,0,0.18);
+        ">💩</span>
+      </div>
     `,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    iconSize: [42, 42],
+    iconAnchor: [21, 21],
+    popupAnchor: [0, -18],
   });
 }
 
@@ -133,21 +137,24 @@ function makeDraftIcon() {
     className: "draft-pin",
     html: `
       <div style="
-        width: 34px;
-        height: 34px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.15);
+        width: 42px;
+        height: 42px;
         display:flex;
         align-items:center;
         justify-content:center;
-        color:white;
-        font-weight:900;
-        font-size:16px;
-        border:2px dashed rgba(255,255,255,0.85);
-      ">+</div>
+        font-size: 28px;
+        line-height: 1;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        border: 2px dashed rgba(255,255,255,0.75);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.28);
+      ">
+        📍
+      </div>
     `,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    iconSize: [42, 42],
+    iconAnchor: [21, 21],
+    popupAnchor: [0, -18],
   });
 }
 
