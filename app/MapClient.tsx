@@ -1,10 +1,10 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
-import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
+import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp } from "firebase/firestore";
 import { db } from "./firebase";
 
 type LatLngLiteral = {
@@ -41,6 +41,57 @@ type Spot = {
 };
 
 const defaultCenter: [number, number] = [48.765, 11.423];
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function round1(n: number) {
+  return Math.round(n * 10) / 10;
+}
+
+function computeScore(r: Ratings) {
+  if (!r.hasToiletPaper) return { score: 0, reason: "Kein Toilettenpapier → 0" };
+
+  let base =
+    (clamp(r.note1, 1, 10) +
+      clamp(r.note2, 1, 10) +
+      clamp(r.note3, 1, 10) +
+      clamp(r.note4, 1, 10)) /
+    4;
+
+  base -= clamp(r.visibleWcDirtPenalty, 0, 3);
+
+  if (r.airDrying) base -= 1;
+  if (r.singlePlyPaper) base -= 1;
+  if (r.contactlessCleaningPossible) base += 1;
+  if (r.seatCleanerAvailable) base += 1;
+  if (r.backgroundMusic) base += 1;
+
+  let score = clamp(base, 0, 10);
+
+  if (!r.soapPresent || !r.dryingPresent) score = Math.min(score, 5);
+  if (r.majorFunctionKO) score = Math.min(score, 4);
+
+  return { score: round1(clamp(score, 0, 10)) };
+}
+
+const defaultRatings: Ratings = {
+  note1: 7,
+  note2: 7,
+  note3: 7,
+  note4: 7,
+  hasToiletPaper: true,
+  soapPresent: true,
+  dryingPresent: true,
+  visibleWcDirtPenalty: 0,
+  majorFunctionKO: false,
+  airDrying: false,
+  singlePlyPaper: false,
+  contactlessCleaningPossible: false,
+  seatCleanerAvailable: false,
+  backgroundMusic: false,
+};
 
 function scoreColor(score: number) {
   if (score >= 8) return "#1fd17b";
@@ -124,10 +175,17 @@ export default function MapClient() {
   const [spots, setSpots] = useState<Spot[]>([]);
   const [draft, setDraft] = useState<LatLngLiteral | null>(null);
   const [flyTo, setFlyTo] = useState<LatLngLiteral | null>(null);
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+
+  const [name, setName] = useState("");
+  const [comment, setComment] = useState("");
+  const [ratings, setRatings] = useState<Ratings>({ ...defaultRatings });
 
   const [searchText, setSearchText] = useState("");
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  const preview = useMemo(() => computeScore(ratings), [ratings]);
 
   useEffect(() => {
     const qy = query(collection(db, "spots"), orderBy("createdAt", "desc"));
@@ -195,6 +253,37 @@ export default function MapClient() {
     }
   }
 
+  async function saveSpot() {
+    if (!draft) {
+      alert("Klick erst auf die Karte oder nutz die Suche.");
+      return;
+    }
+
+    const cleanName = name.trim();
+    if (!cleanName) {
+      alert("Bitte Ort/Name eingeben.");
+      return;
+    }
+
+    const { score } = computeScore(ratings);
+
+    await addDoc(collection(db, "spots"), {
+      name: cleanName,
+      comment: comment.trim(),
+      lat: draft.lat,
+      lng: draft.lng,
+      ratings,
+      score,
+      createdAt: serverTimestamp(),
+    });
+
+    setName("");
+    setComment("");
+    setRatings({ ...defaultRatings });
+    setDraft(null);
+    setIsSheetOpen(false);
+  }
+
   return (
     <>
       <style jsx global>{`
@@ -237,13 +326,37 @@ export default function MapClient() {
           gap: 10px;
         }
 
-        .hintCard {
-          padding: 12px;
-          border-radius: 16px;
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          background: rgba(255, 255, 255, 0.03);
-          font-size: 13px;
-          opacity: 0.9;
+        .sheetBackdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.45);
+          z-index: 999;
+        }
+
+        .bottomSheet {
+          position: fixed;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          z-index: 1000;
+          max-height: 82vh;
+          overflow: auto;
+          border-top-left-radius: 22px;
+          border-top-right-radius: 22px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: #111;
+          padding: 16px;
+          display: grid;
+          gap: 10px;
+          box-shadow: 0 -10px 40px rgba(0,0,0,0.45);
+        }
+
+        .sheetHandle {
+          width: 46px;
+          height: 5px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.3);
+          margin: 0 auto 8px auto;
         }
 
         @media (max-width: 640px) {
@@ -328,13 +441,6 @@ export default function MapClient() {
           </MapContainer>
         </div>
 
-        <div className="hintCard">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>So nutzt du die Karte</div>
-          <div>1. Ort oben suchen oder direkt auf die Karte tippen.</div>
-          <div>2. Dann wird ein neuer Spot markiert.</div>
-          <div>3. Im nächsten Schritt bauen wir das Bewertungsfenster, das sich erst dann öffnet.</div>
-        </div>
-
         <div className="bottomActionBar">
           <button
             style={{
@@ -343,15 +449,128 @@ export default function MapClient() {
               cursor: draft ? "pointer" : "not-allowed",
             }}
             disabled={!draft}
-            onClick={() => {
-              alert("Im nächsten Schritt öffnet hier das Bewertungsfenster.");
-            }}
+            onClick={() => setIsSheetOpen(true)}
           >
             Spot bewerten
           </button>
         </div>
       </div>
+
+      {isSheetOpen ? (
+        <>
+          <div className="sheetBackdrop" onClick={() => setIsSheetOpen(false)} />
+          <div className="bottomSheet">
+            <div className="sheetHandle" />
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <div style={{ fontWeight: 900, fontSize: 18 }}>Spot bewerten</div>
+              <button onClick={() => setIsSheetOpen(false)} style={buttonGhostStyle}>
+                Schließen
+              </button>
+            </div>
+
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ort/Name"
+              style={inputStyle}
+            />
+            <input
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Kommentar (optional)"
+              style={inputStyle}
+            />
+
+            <div style={sectionTitle}>4 Noten (1–10)</div>
+            <NumberRow label="1. Erster Eindruck" value={ratings.note1} onChange={(v) => setRatings({ ...ratings, note1: v })} />
+            <NumberRow label="2. Waschbereich" value={ratings.note2} onChange={(v) => setRatings({ ...ratings, note2: v })} />
+            <NumberRow label="3. WC-Kabine" value={ratings.note3} onChange={(v) => setRatings({ ...ratings, note3: v })} />
+            <NumberRow label="4. Raumklima & Komfort" value={ratings.note4} onChange={(v) => setRatings({ ...ratings, note4: v })} />
+
+            <div style={sectionTitle}>Harte Regeln / K.O.</div>
+            <ToggleRow label="Toilettenpapier vorhanden?" checked={ratings.hasToiletPaper} onChange={(c) => setRatings({ ...ratings, hasToiletPaper: c })} />
+            <ToggleRow label="Seife vorhanden?" checked={ratings.soapPresent} onChange={(c) => setRatings({ ...ratings, soapPresent: c })} />
+            <ToggleRow label="Trocknung vorhanden?" checked={ratings.dryingPresent} onChange={(c) => setRatings({ ...ratings, dryingPresent: c })} />
+            <SelectRow label="Sichtbare WC-Verschmutzung" value={ratings.visibleWcDirtPenalty} onChange={(v) => setRatings({ ...ratings, visibleWcDirtPenalty: v })} />
+            <ToggleRow label="Funktions-K.O." checked={ratings.majorFunctionKO} onChange={(c) => setRatings({ ...ratings, majorFunctionKO: c })} />
+
+            <div style={sectionTitle}>Bedingungen</div>
+            <ToggleRow label="Lufttrocknung (−1)" checked={ratings.airDrying} onChange={(c) => setRatings({ ...ratings, airDrying: c })} />
+            <ToggleRow label="Einlagiges Papier (−1)" checked={ratings.singlePlyPaper} onChange={(c) => setRatings({ ...ratings, singlePlyPaper: c })} />
+            <ToggleRow label="Kontaktlos reinigen (+1)" checked={ratings.contactlessCleaningPossible} onChange={(c) => setRatings({ ...ratings, contactlessCleaningPossible: c })} />
+            <ToggleRow label="Klobrillen-Reiniger (+1)" checked={ratings.seatCleanerAvailable} onChange={(c) => setRatings({ ...ratings, seatCleanerAvailable: c })} />
+            <ToggleRow label="Musik (+1)" checked={ratings.backgroundMusic} onChange={(c) => setRatings({ ...ratings, backgroundMusic: c })} />
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <div style={{ fontWeight: 900 }}>Vorschau: {preview.score}/10</div>
+              <button onClick={saveSpot} style={buttonStyle}>
+                Speichern
+              </button>
+            </div>
+          </div>
+        </>
+      ) : null}
     </>
+  );
+}
+
+function NumberRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <div style={{ fontSize: 13, opacity: 0.9 }}>{label}</div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <input type="range" min={1} max={10} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: "100%" }} />
+        <div style={{ width: 34, textAlign: "right", fontWeight: 900 }}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (c: boolean) => void;
+}) {
+  return (
+    <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+      <span style={{ fontSize: 13, opacity: 0.9 }}>{label}</span>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+}
+
+function SelectRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: 0 | 1 | 2 | 3;
+  onChange: (v: 0 | 1 | 2 | 3) => void;
+}) {
+  return (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span style={{ fontSize: 13, opacity: 0.9 }}>{label}</span>
+      <select value={value} onChange={(e) => onChange(Number(e.target.value) as any)} style={{ ...inputStyle, cursor: "pointer" }}>
+        <option value={0}>Keine</option>
+        <option value={1}>-1 Punkt</option>
+        <option value={2}>-2 Punkte</option>
+        <option value={3}>-3 Punkte</option>
+      </select>
+    </label>
   );
 }
 
@@ -382,4 +601,11 @@ const buttonGhostStyle: React.CSSProperties = {
   color: "white",
   fontWeight: 900,
   cursor: "pointer",
+};
+
+const sectionTitle: React.CSSProperties = {
+  marginTop: 6,
+  fontWeight: 900,
+  fontSize: 13,
+  opacity: 0.95,
 };
