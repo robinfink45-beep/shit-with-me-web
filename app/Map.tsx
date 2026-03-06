@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import type { LatLngLiteral } from "leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-
 import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp } from "firebase/firestore";
 import { db } from "./firebase";
+
+type LatLngLiteral = {
+  lat: number;
+  lng: number;
+};
 
 type Ratings = {
   note1: number;
@@ -44,6 +45,7 @@ const defaultCenter: [number, number] = [48.765, 11.423];
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
+
 function round1(n: number) {
   return Math.round(n * 10) / 10;
 }
@@ -91,7 +93,6 @@ const defaultRatings: Ratings = {
   backgroundMusic: false,
 };
 
-// ----- Marker Icons (score als runde Badge, farbig)
 function scoreColor(score: number) {
   if (score >= 8) return "#1fd17b";
   if (score >= 6) return "#7bdc3a";
@@ -100,55 +101,69 @@ function scoreColor(score: number) {
   return "#ff4d4d";
 }
 
-function makeScoreIcon(score: number) {
-  const c = scoreColor(score);
-  const s = Math.round(score);
-  return L.divIcon({
-    className: "score-pin",
-    html: `
-      <div style="
-        width: 34px; height: 34px;
-        border-radius: 999px;
-        background: ${c};
-        display:flex; align-items:center; justify-content:center;
-        color: #0b0b0b; font-weight: 900; font-size: 14px;
-        border: 2px solid rgba(255,255,255,0.85);
-        box-shadow: 0 10px 25px rgba(0,0,0,0.35);
-      ">${s}</div>
-    `,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
-  });
-}
-
-function makeDraftIcon() {
-  return L.divIcon({
-    className: "draft-pin",
-    html: `
-      <div style="
-        width: 34px; height: 34px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.15);
-        display:flex; align-items:center; justify-content:center;
-        color: white; font-weight: 900; font-size: 16px;
-        border: 2px dashed rgba(255,255,255,0.85);
-      ">+</div>
-    `,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
-  });
-}
-
-// ✅ Leaflet dynamisch laden (SSR-safe)
 const LeafletMap = dynamic(
   async () => {
-    const mod = await import("react-leaflet");
-    const { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } = mod;
+    const ReactLeaflet = await import("react-leaflet");
+    const Leaflet = await import("leaflet");
+    await import("leaflet/dist/leaflet.css");
+
+    const { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } = ReactLeaflet;
+    const L = Leaflet.default;
+
+    function makeScoreIcon(score: number) {
+      const c = scoreColor(score);
+      const s = Math.round(score);
+
+      return L.divIcon({
+        className: "score-pin",
+        html: `
+          <div style="
+            width: 34px;
+            height: 34px;
+            border-radius: 999px;
+            background: ${c};
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            color:#0b0b0b;
+            font-weight:900;
+            font-size:14px;
+            border:2px solid rgba(255,255,255,0.85);
+            box-shadow:0 10px 25px rgba(0,0,0,0.35);
+          ">${s}</div>
+        `,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+      });
+    }
+
+    function makeDraftIcon() {
+      return L.divIcon({
+        className: "draft-pin",
+        html: `
+          <div style="
+            width: 34px;
+            height: 34px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.15);
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            color:white;
+            font-weight:900;
+            font-size:16px;
+            border:2px dashed rgba(255,255,255,0.85);
+          ">+</div>
+        `,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+      });
+    }
 
     function ClickToDraft({ onDraft }: { onDraft: (p: LatLngLiteral) => void }) {
       useMapEvents({
         click(e) {
-          onDraft(e.latlng);
+          onDraft({ lat: e.latlng.lat, lng: e.latlng.lng });
         },
       });
       return null;
@@ -156,10 +171,12 @@ const LeafletMap = dynamic(
 
     function FlyToController({ flyTo }: { flyTo: LatLngLiteral | null }) {
       const map = useMap();
+
       useEffect(() => {
         if (!flyTo) return;
         map.flyTo([flyTo.lat, flyTo.lng], Math.max(map.getZoom(), 16), { duration: 0.6 });
       }, [flyTo, map]);
+
       return null;
     }
 
@@ -171,7 +188,11 @@ const LeafletMap = dynamic(
     }) {
       return (
         <MapContainer center={defaultCenter} zoom={13} className="mapCanvas">
-          <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <TileLayer
+            attribution="&copy; OpenStreetMap"
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+
           <ClickToDraft onDraft={props.onDraft} />
           <FlyToController flyTo={props.flyTo} />
 
@@ -212,14 +233,12 @@ export default function Map() {
   const [comment, setComment] = useState("");
   const [ratings, setRatings] = useState<Ratings>({ ...defaultRatings });
 
-  // Suche
   const [searchText, setSearchText] = useState("");
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const preview = useMemo(() => computeScore(ratings), [ratings]);
 
-  // ✅ Live aus Firestore laden
   useEffect(() => {
     const qy = query(collection(db, "spots"), orderBy("createdAt", "desc"));
     return onSnapshot(qy, (snap) => {
@@ -229,13 +248,21 @@ export default function Map() {
   }, []);
 
   async function zoomToMyLocation() {
-    if (!navigator.geolocation) return alert("Geolocation nicht verfügbar.");
+    if (!navigator.geolocation) {
+      alert("Geolocation nicht verfügbar.");
+      return;
+    }
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setFlyTo(p);
+        setFlyTo({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
       },
-      () => alert("Standort konnte nicht abgerufen werden (Berechtigung?)."),
+      () => {
+        alert("Standort konnte nicht abgerufen werden.");
+      },
       { enableHighAccuracy: true, timeout: 12000 }
     );
   }
@@ -248,9 +275,14 @@ export default function Map() {
     setSearchError(null);
 
     try {
-      // OSM Nominatim (free) – nicht spammen
-      const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(q);
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      const url =
+        "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" +
+        encodeURIComponent(q);
+
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+      });
+
       if (!res.ok) throw new Error("Suche fehlgeschlagen");
 
       const data = (await res.json()) as Array<{ lat: string; lon: string }>;
@@ -259,9 +291,13 @@ export default function Map() {
         return;
       }
 
-      const p = { lat: Number(data[0].lat), lng: Number(data[0].lon) };
+      const p = {
+        lat: Number(data[0].lat),
+        lng: Number(data[0].lon),
+      };
+
       setFlyTo(p);
-      setDraft(p); // optional: direkt als Draft setzen
+      setDraft(p);
     } catch (e: any) {
       setSearchError(e?.message ?? "Fehler bei Suche");
     } finally {
@@ -270,9 +306,16 @@ export default function Map() {
   }
 
   async function saveSpot() {
-    if (!draft) return alert("Klick erst auf die Karte oder nutz die Suche.");
+    if (!draft) {
+      alert("Klick erst auf die Karte oder nutz die Suche.");
+      return;
+    }
+
     const cleanName = name.trim();
-    if (!cleanName) return alert("Bitte Ort/Name eingeben.");
+    if (!cleanName) {
+      alert("Bitte Ort/Name eingeben.");
+      return;
+    }
 
     const { score } = computeScore(ratings);
 
@@ -322,7 +365,6 @@ export default function Map() {
           width: 100%;
         }
 
-        /* ✅ Mobile: untereinander + Map groß */
         @media (max-width: 860px) {
           .layout {
             grid-template-columns: 1fr;
@@ -332,7 +374,6 @@ export default function Map() {
           }
         }
 
-        /* ✅ Sehr klein (iPhone): bisschen mehr Höhe + komfortable Buttons */
         @media (max-width: 420px) {
           .mapCanvas {
             height: 56vh;
@@ -347,12 +388,10 @@ export default function Map() {
       `}</style>
 
       <div className="layout">
-        {/* MAP */}
         <div className="mapWrap">
           <LeafletMap spots={spots} draft={draft} onDraft={setDraft} flyTo={flyTo} />
         </div>
 
-        {/* PANEL */}
         <div className="panel">
           <div style={{ fontWeight: 900, fontSize: 16 }}>Tools</div>
 
@@ -383,20 +422,29 @@ export default function Map() {
               {searchBusy ? "..." : "Suchen"}
             </button>
           </div>
+
           {searchError ? <div style={{ color: "#ff8a8a", fontSize: 12 }}>{searchError}</div> : null}
+
           <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Hinweis: Suche setzt auch direkt den Draft-Pin, dann kannst du sofort speichern.
+            Suche setzt direkt den Draft-Pin.
           </div>
 
           <hr style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.10)", margin: "8px 0" }} />
 
           <div style={{ fontWeight: 900, fontSize: 16 }}>Neuen Spot eintragen</div>
-          <div style={{ fontSize: 12, opacity: 0.75 }}>
-            1) Klick auf Karte / Suche → 2) Daten → 3) Speichern
-          </div>
 
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ort/Name" style={inputStyle} />
-          <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Kommentar (optional)" style={inputStyle} />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Ort/Name"
+            style={inputStyle}
+          />
+          <input
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Kommentar (optional)"
+            style={inputStyle}
+          />
 
           <div style={sectionTitle}>4 Noten (1–10)</div>
           <NumberRow label="1. Erster Eindruck" value={ratings.note1} onChange={(v) => setRatings({ ...ratings, note1: v })} />
@@ -424,29 +472,48 @@ export default function Map() {
               Spot speichern
             </button>
           </div>
-
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Wenn nichts speichert: erst Karte klicken oder Suche → dann Draft-Pin erscheint.
-          </div>
         </div>
       </div>
     </>
   );
 }
 
-function NumberRow({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+function NumberRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ fontSize: 13, opacity: 0.9 }}>{label}</div>
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <input type="range" min={1} max={10} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: "100%" }} />
+        <input
+          type="range"
+          min={1}
+          max={10}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={{ width: "100%" }}
+        />
         <div style={{ width: 34, textAlign: "right", fontWeight: 900 }}>{value}</div>
       </div>
     </div>
   );
 }
 
-function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (c: boolean) => void }) {
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (c: boolean) => void;
+}) {
   return (
     <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
       <span style={{ fontSize: 13, opacity: 0.9 }}>{label}</span>
@@ -455,11 +522,23 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
   );
 }
 
-function SelectRow({ label, value, onChange }: { label: string; value: 0 | 1 | 2 | 3; onChange: (v: 0 | 1 | 2 | 3) => void }) {
+function SelectRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: 0 | 1 | 2 | 3;
+  onChange: (v: 0 | 1 | 2 | 3) => void;
+}) {
   return (
     <label style={{ display: "grid", gap: 6 }}>
       <span style={{ fontSize: 13, opacity: 0.9 }}>{label}</span>
-      <select value={value} onChange={(e) => onChange(Number(e.target.value) as any)} style={{ ...inputStyle, cursor: "pointer" }}>
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value) as any)}
+        style={{ ...inputStyle, cursor: "pointer" }}
+      >
         <option value={0}>Keine</option>
         <option value={1}>-1 Punkt</option>
         <option value={2}>-2 Punkte</option>
