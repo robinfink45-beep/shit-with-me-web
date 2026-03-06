@@ -119,20 +119,52 @@ function scoreColor(score: number) {
   return "#ff4d4d";
 }
 
+function isPremiumSpot(score: number) {
+  return score >= 9;
+}
+
 function makeScoreIcon(score: number) {
+  if (isPremiumSpot(score)) {
+    return L.divIcon({
+      className: "gold-pin",
+      html: `
+        <div style="
+          width:48px;
+          height:48px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border-radius:14px;
+          background: linear-gradient(135deg, #ffe082, #ffc107 40%, #ffb300 70%, #ffd54f);
+          border: 2px solid rgba(255,245,176,0.95);
+          box-shadow:
+            0 10px 24px rgba(0,0,0,0.38),
+            inset 0 1px 8px rgba(255,255,255,0.7);
+          font-size: 24px;
+          transform: rotate(-6deg);
+        ">
+          🏆
+        </div>
+      `,
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
+      popupAnchor: [0, -18],
+    });
+  }
+
   const c = scoreColor(score);
 
   return L.divIcon({
     className: "poop-pin",
     html: `
       <div style="
-        width: 42px;
-        height: 42px;
+        width:42px;
+        height:42px;
         display:flex;
         align-items:center;
         justify-content:center;
-        font-size: 28px;
-        line-height: 1;
+        font-size:28px;
+        line-height:1;
         filter: drop-shadow(0 6px 12px rgba(0,0,0,0.35));
       ">
         <span style="
@@ -155,23 +187,23 @@ function makeDraftIcon() {
     className: "draft-pin",
     html: `
       <div style="
-        width: 42px;
-        height: 42px;
+        width:44px;
+        height:44px;
         display:flex;
         align-items:center;
         justify-content:center;
-        font-size: 28px;
-        line-height: 1;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.08);
-        border: 2px dashed rgba(255,255,255,0.75);
+        font-size:28px;
+        line-height:1;
+        border-radius:999px;
+        background: rgba(255,255,255,0.10);
+        border: 2px dashed rgba(255,255,255,0.82);
         box-shadow: 0 8px 20px rgba(0,0,0,0.28);
       ">
         📍
       </div>
     `,
-    iconSize: [42, 42],
-    iconAnchor: [21, 21],
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
     popupAnchor: [0, -18],
   });
 }
@@ -208,7 +240,9 @@ function FlyToController({ flyTo }: { flyTo: LatLngLiteral | null }) {
 
   useEffect(() => {
     if (!flyTo) return;
-    map.flyTo([flyTo.lat, flyTo.lng], Math.max(map.getZoom(), 16), { duration: 0.6 });
+    map.flyTo([flyTo.lat, flyTo.lng], Math.max(map.getZoom(), 16), {
+      duration: 0.6,
+    });
   }, [flyTo, map]);
 
   return null;
@@ -218,6 +252,7 @@ export default function MapClient() {
   const [spots, setSpots] = useState<Spot[]>([]);
   const [draft, setDraft] = useState<LatLngLiteral | null>(null);
   const [flyTo, setFlyTo] = useState<LatLngLiteral | null>(null);
+
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isBellOpen, setIsBellOpen] = useState(false);
 
@@ -241,6 +276,7 @@ export default function MapClient() {
 
   useEffect(() => {
     const qy = query(collection(db, "spots"), orderBy("createdAt", "desc"));
+
     return onSnapshot(qy, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Spot[];
       setSpots(list);
@@ -297,6 +333,7 @@ export default function MapClient() {
     setComment(spot.comment ?? "");
     setRatings(spot.ratings ?? { ...defaultRatings });
 
+    setIsBellOpen(false);
     setIsSheetOpen(true);
   }
 
@@ -368,7 +405,7 @@ export default function MapClient() {
     const cleanName = name.trim();
 
     if (!cleanAuthor) {
-      alert("Bitte Autor/Name eingeben.");
+      alert("Bitte Autor eingeben.");
       return;
     }
 
@@ -432,12 +469,12 @@ export default function MapClient() {
           top: 0;
           z-index: 500;
           display: grid;
-          gap: 8px;
+          gap: 10px;
           padding: 10px;
-          border-radius: 16px;
+          border-radius: 18px;
           border: 1px solid rgba(255, 255, 255, 0.12);
           background: rgba(15, 15, 15, 0.92);
-          backdrop-filter: blur(12px);
+          backdrop-filter: blur(14px);
         }
 
         .topBarHeader {
@@ -447,13 +484,19 @@ export default function MapClient() {
           gap: 12px;
         }
 
+        .brandTitle {
+          font-size: 18px;
+          font-weight: 900;
+          letter-spacing: 0.2px;
+        }
+
         .searchRow {
           display: flex;
           gap: 8px;
         }
 
         .mapWrap {
-          border-radius: 18px;
+          border-radius: 20px;
           overflow: hidden;
           border: 1px solid rgba(255, 255, 255, 0.12);
         }
@@ -481,10 +524,10 @@ export default function MapClient() {
           right: 0;
           bottom: 0;
           z-index: 1000;
-          max-height: 82vh;
+          max-height: 84vh;
           overflow: auto;
-          border-top-left-radius: 22px;
-          border-top-right-radius: 22px;
+          border-top-left-radius: 24px;
+          border-top-right-radius: 24px;
           border: 1px solid rgba(255,255,255,0.12);
           background: #111;
           padding: 16px;
@@ -507,6 +550,19 @@ export default function MapClient() {
           display: grid;
           gap: 2px;
           margin-top: 4px;
+        }
+
+        .premiumBadge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          background: linear-gradient(135deg, #ffe082, #ffca28);
+          color: #1a1200;
+          font-weight: 900;
+          font-size: 12px;
+          border: 1px solid rgba(255, 245, 176, 0.95);
         }
 
         .bellWrap {
@@ -546,7 +602,7 @@ export default function MapClient() {
           position: absolute;
           top: calc(100% + 8px);
           right: 0;
-          width: min(340px, 85vw);
+          width: min(340px, 88vw);
           max-height: 320px;
           overflow: auto;
           border-radius: 16px;
@@ -575,6 +631,11 @@ export default function MapClient() {
           font-size: 13px;
         }
 
+        .miniText {
+          font-size: 12px;
+          opacity: 0.72;
+        }
+
         @media (max-width: 640px) {
           .mapCanvas {
             height: 78vh;
@@ -595,7 +656,10 @@ export default function MapClient() {
       <div className="mobileMapLayout">
         <div className="topBar">
           <div className="topBarHeader">
-            <div style={{ fontWeight: 900, fontSize: 18 }}>Shit With Me</div>
+            <div>
+              <div className="brandTitle">💩 Shit With Me</div>
+              <div className="miniText">Finde, bewerte und update eure Spots</div>
+            </div>
 
             <div className="bellWrap">
               <button className="bellButton" onClick={() => setIsBellOpen((v) => !v)}>
@@ -676,15 +740,19 @@ export default function MapClient() {
             {spots.map((s) => (
               <Marker key={s.id} position={[s.lat, s.lng]} icon={makeScoreIcon(s.score)}>
                 <Popup>
-                  <div style={{ display: "grid", gap: 6, minWidth: 180 }}>
+                  <div style={{ display: "grid", gap: 8, minWidth: 200 }}>
                     <div>
-                      <b style={{ fontSize: 14 }}>{s.name}</b>
+                      <b style={{ fontSize: 15 }}>{s.name}</b>
                       <div style={{ opacity: 0.85 }}>
                         Score: <b>{s.score}/10</b>
                       </div>
                     </div>
 
-                    {s.comment ? <div style={{ opacity: 0.9 }}>{s.comment}</div> : null}
+                    {isPremiumSpot(s.score) ? (
+                      <div className="premiumBadge">🏆 Premium Spot / Goldbarren</div>
+                    ) : null}
+
+                    {s.comment ? <div style={{ opacity: 0.92 }}>{s.comment}</div> : null}
 
                     <div className="popupMeta">
                       <div>
@@ -810,7 +878,14 @@ function NumberRow({
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ fontSize: 13, opacity: 0.9 }}>{label}</div>
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <input type="range" min={1} max={10} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: "100%" }} />
+        <input
+          type="range"
+          min={1}
+          max={10}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={{ width: "100%" }}
+        />
         <div style={{ width: 34, textAlign: "right", fontWeight: 900 }}>{value}</div>
       </div>
     </div>
@@ -846,7 +921,11 @@ function SelectRow({
   return (
     <label style={{ display: "grid", gap: 6 }}>
       <span style={{ fontSize: 13, opacity: 0.9 }}>{label}</span>
-      <select value={value} onChange={(e) => onChange(Number(e.target.value) as any)} style={{ ...inputStyle, cursor: "pointer" }}>
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value) as 0 | 1 | 2 | 3)}
+        style={{ ...inputStyle, cursor: "pointer" }}
+      >
         <option value={0}>Keine</option>
         <option value={1}>-1 Punkt</option>
         <option value={2}>-2 Punkte</option>
