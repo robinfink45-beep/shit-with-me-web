@@ -1,7 +1,7 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
 import {
@@ -56,9 +56,12 @@ type NotificationItem = {
   title: string;
   lat: number;
   lng: number;
+  timestampMs: number;
+  isNew: boolean;
 };
 
 const defaultCenter: [number, number] = [48.765, 11.423];
+const NEW_LIMIT_MS = 24 * 60 * 60 * 1000;
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -226,6 +229,24 @@ function formatFirestoreDate(value: any) {
   }
 }
 
+function getFirestoreDateMs(value: any) {
+  if (!value) return 0;
+
+  try {
+    if (typeof value.toDate === "function") {
+      return value.toDate().getTime();
+    }
+
+    if (value.seconds) {
+      return value.seconds * 1000;
+    }
+
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
 function ClickToDraft({ onDraft }: { onDraft: (p: LatLngLiteral) => void }) {
   useMapEvents({
     click(e) {
@@ -271,38 +292,32 @@ export default function MapClient() {
 
   const preview = useMemo(() => computeScore(ratings), [ratings]);
 
-  const firstLoadRef = useRef(true);
-  const knownSpotIdsRef = useRef<Set<string>>(new Set());
-
   useEffect(() => {
-    const qy = query(collection(db, "spots"), orderBy("createdAt", "desc"));
+    const qy = query(collection(db, "spots"), orderBy("updatedAt", "desc"));
 
     return onSnapshot(qy, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Spot[];
       setSpots(list);
 
-      const currentIds = new Set(list.map((s) => s.id));
+      const now = Date.now();
 
-      if (firstLoadRef.current) {
-        knownSpotIdsRef.current = currentIds;
-        firstLoadRef.current = false;
-        return;
-      }
+      const generatedNotifications: NotificationItem[] = list.map((spot) => {
+        const updatedMs = getFirestoreDateMs(spot.updatedAt);
+        const createdMs = getFirestoreDateMs(spot.createdAt);
+        const relevantMs = updatedMs || createdMs;
+        const isUpdate = updatedMs && createdMs && updatedMs !== createdMs;
 
-      const newOnes = list.filter((spot) => !knownSpotIdsRef.current.has(spot.id));
-
-      if (newOnes.length > 0) {
-        const freshNotifications: NotificationItem[] = newOnes.map((spot) => ({
+        return {
           id: spot.id,
-          title: `${spot.author || "Jemand"} hat ${spot.name} eingetragen`,
+          title: `${spot.author || "Jemand"} hat ${spot.name} ${isUpdate ? "aktualisiert" : "eingetragen"}`,
           lat: spot.lat,
           lng: spot.lng,
-        }));
+          timestampMs: relevantMs,
+          isNew: now - relevantMs <= NEW_LIMIT_MS,
+        };
+      });
 
-        setNotifications((prev) => [...freshNotifications, ...prev]);
-      }
-
-      knownSpotIdsRef.current = currentIds;
+      setNotifications(generatedNotifications);
     });
   }, []);
 
@@ -452,9 +467,10 @@ export default function MapClient() {
   }
 
   function clearNotifications() {
-    setNotifications([]);
     setIsBellOpen(false);
   }
+
+  const newNotificationCount = notifications.filter((n) => n.isNew).length;
 
   return (
     <>
@@ -618,8 +634,6 @@ export default function MapClient() {
         .notificationItem {
           padding: 10px 12px;
           border-radius: 12px;
-          border: 1px solid rgba(255,255,255,0.08);
-          background: rgba(255,255,255,0.04);
           color: white;
           text-align: left;
           cursor: pointer;
@@ -664,9 +678,7 @@ export default function MapClient() {
             <div className="bellWrap">
               <button className="bellButton" onClick={() => setIsBellOpen((v) => !v)}>
                 🔔
-                {notifications.length > 0 ? (
-                  <span className="bellBadge">{notifications.length}</span>
-                ) : null}
+                {newNotificationCount > 0 ? <span className="bellBadge">{newNotificationCount}</span> : null}
               </button>
 
               {isBellOpen ? (
@@ -675,21 +687,33 @@ export default function MapClient() {
                     <div style={{ fontWeight: 900 }}>Benachrichtigungen</div>
                     {notifications.length > 0 ? (
                       <button onClick={clearNotifications} style={{ ...buttonGhostStyle, padding: "8px 10px" }}>
-                        Leeren
+                        Schließen
                       </button>
                     ) : null}
                   </div>
 
                   {notifications.length === 0 ? (
-                    <div className="notificationEmpty">Keine neuen Benachrichtigungen.</div>
+                    <div className="notificationEmpty">Keine Benachrichtigungen vorhanden.</div>
                   ) : (
                     notifications.map((item) => (
                       <button
                         key={item.id}
                         className="notificationItem"
                         onClick={() => openNotification(item)}
+                        style={{
+                          border: item.isNew
+                            ? "1px solid rgba(255,90,90,0.45)"
+                            : "1px solid rgba(255,255,255,0.08)",
+                          background: item.isNew
+                            ? "rgba(255,90,90,0.08)"
+                            : "rgba(255,255,255,0.04)",
+                        }}
                       >
-                        {item.title}
+                        <div style={{ fontWeight: item.isNew ? 900 : 700 }}>{item.title}</div>
+                        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                          {new Date(item.timestampMs).toLocaleString("de-DE")}
+                          {item.isNew ? " • neu" : ""}
+                        </div>
                       </button>
                     ))
                   )}
