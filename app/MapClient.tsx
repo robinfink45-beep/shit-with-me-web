@@ -276,6 +276,7 @@ export default function MapClient() {
 
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isBellOpen, setIsBellOpen] = useState(false);
+  const [isTopOpen, setIsTopOpen] = useState(false);
 
   const [editingSpotId, setEditingSpotId] = useState<string | null>(null);
 
@@ -291,6 +292,10 @@ export default function MapClient() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   const preview = useMemo(() => computeScore(ratings), [ratings]);
+
+  const topSpots = useMemo(() => {
+    return [...spots].sort((a, b) => b.score - a.score).slice(0, 10);
+  }, [spots]);
 
   useEffect(() => {
     const qy = query(collection(db, "spots"), orderBy("updatedAt", "desc"));
@@ -349,6 +354,7 @@ export default function MapClient() {
     setRatings(spot.ratings ?? { ...defaultRatings });
 
     setIsBellOpen(false);
+    setIsTopOpen(false);
     setIsSheetOpen(true);
   }
 
@@ -475,51 +481,145 @@ export default function MapClient() {
   return (
     <>
       <style jsx global>{`
-        .mobileMapLayout {
+        .mapPageWrap {
           display: grid;
           gap: 12px;
         }
 
-        .topBar {
-          position: sticky;
-          top: 0;
-          z-index: 500;
-          display: grid;
-          gap: 10px;
-          padding: 10px;
-          border-radius: 18px;
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          background: rgba(15, 15, 15, 0.92);
-          backdrop-filter: blur(14px);
-        }
-
-        .topBarHeader {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-        }
-
-        .brandTitle {
-          font-size: 18px;
-          font-weight: 900;
-          letter-spacing: 0.2px;
-        }
-
-        .searchRow {
-          display: flex;
-          gap: 8px;
-        }
-
-        .mapWrap {
-          border-radius: 20px;
+        .mapOverlayWrap {
+          position: relative;
+          border-radius: 22px;
           overflow: hidden;
           border: 1px solid rgba(255, 255, 255, 0.12);
         }
 
         .mapCanvas {
-          height: 72vh;
+          height: 82vh;
           width: 100%;
+        }
+
+        .mapTopOverlay {
+          position: absolute;
+          top: 10px;
+          left: 10px;
+          right: 10px;
+          z-index: 600;
+          display: grid;
+          gap: 8px;
+          pointer-events: none;
+        }
+
+        .searchOverlayRow,
+        .iconOverlayRow {
+          display: flex;
+          gap: 8px;
+          pointer-events: auto;
+        }
+
+        .searchOverlayBox {
+          flex: 1;
+          display: flex;
+          gap: 8px;
+          padding: 8px;
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(15, 15, 15, 0.82);
+          backdrop-filter: blur(14px);
+          box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        }
+
+        .overlayIconButton {
+          position: relative;
+          width: 48px;
+          height: 48px;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.18);
+          background: rgba(15, 15, 15, 0.82);
+          backdrop-filter: blur(14px);
+          color: white;
+          font-size: 20px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        }
+
+        .overlayActionButton {
+          padding: 12px 14px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.18);
+          background: white;
+          color: black;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .bellBadge {
+          position: absolute;
+          top: -6px;
+          right: -6px;
+          min-width: 22px;
+          height: 22px;
+          padding: 0 6px;
+          border-radius: 999px;
+          background: #ff4d4d;
+          color: white;
+          font-size: 12px;
+          font-weight: 900;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 2px solid #111;
+        }
+
+        .floatingDropdown {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          width: min(340px, 88vw);
+          max-height: 340px;
+          overflow: auto;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: #111;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+          padding: 10px;
+          display: grid;
+          gap: 8px;
+          z-index: 900;
+        }
+
+        .floatingDropdownLeft {
+          position: absolute;
+          top: calc(100% + 8px);
+          left: 0;
+          width: min(360px, 90vw);
+          max-height: 380px;
+          overflow: auto;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: #111;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+          padding: 10px;
+          display: grid;
+          gap: 8px;
+          z-index: 900;
+        }
+
+        .notificationItem,
+        .topSpotItem {
+          padding: 10px 12px;
+          border-radius: 12px;
+          color: white;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .notificationEmpty {
+          padding: 10px 12px;
+          opacity: 0.7;
+          font-size: 13px;
         }
 
         .bottomActionBar {
@@ -581,178 +681,153 @@ export default function MapClient() {
           border: 1px solid rgba(255, 245, 176, 0.95);
         }
 
-        .bellWrap {
-          position: relative;
-        }
-
-        .bellButton {
-          position: relative;
-          padding: 10px 12px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.18);
-          background: rgba(0,0,0,0.25);
-          color: white;
-          font-size: 20px;
-          cursor: pointer;
-        }
-
-        .bellBadge {
-          position: absolute;
-          top: -6px;
-          right: -6px;
-          min-width: 22px;
-          height: 22px;
-          padding: 0 6px;
-          border-radius: 999px;
-          background: #ff4d4d;
-          color: white;
-          font-size: 12px;
-          font-weight: 900;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border: 2px solid #111;
-        }
-
-        .bellDropdown {
-          position: absolute;
-          top: calc(100% + 8px);
-          right: 0;
-          width: min(340px, 88vw);
-          max-height: 320px;
-          overflow: auto;
-          border-radius: 16px;
-          border: 1px solid rgba(255,255,255,0.12);
-          background: #111;
-          box-shadow: 0 20px 40px rgba(0,0,0,0.4);
-          padding: 10px;
-          display: grid;
-          gap: 8px;
-          z-index: 900;
-        }
-
-        .notificationItem {
-          padding: 10px 12px;
-          border-radius: 12px;
-          color: white;
-          text-align: left;
-          cursor: pointer;
-        }
-
-        .notificationEmpty {
-          padding: 10px 12px;
-          opacity: 0.7;
-          font-size: 13px;
-        }
-
-        .miniText {
-          font-size: 12px;
-          opacity: 0.72;
-        }
-
         @media (max-width: 640px) {
           .mapCanvas {
-            height: 78vh;
+            height: 86vh;
           }
 
-          .searchRow,
-          .bottomActionBar {
-            flex-direction: column;
+          .searchOverlayBox {
+            padding: 7px;
           }
 
-          .searchRow button,
-          .bottomActionBar button {
-            width: 100%;
+          .floatingDropdown,
+          .floatingDropdownLeft {
+            width: min(320px, 90vw);
           }
         }
       `}</style>
 
-      <div className="mobileMapLayout">
-        <div className="topBar">
-          <div className="topBarHeader">
-            <div>
-              <div className="brandTitle">💩 Shit With Me</div>
-              <div className="miniText">Finde, bewerte und update eure Spots</div>
+      <div className="mapPageWrap">
+        <div className="mapOverlayWrap">
+          <div className="mapTopOverlay">
+            <div className="searchOverlayRow">
+              <div className="searchOverlayBox">
+                <input
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  placeholder='Ort suchen, z. B. "Aral Ingolstadt" oder Adresse'
+                  style={{ ...inputStyle, flex: 1, padding: "10px 12px" }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") searchAndZoom();
+                  }}
+                />
+                <button onClick={searchAndZoom} style={overlayActionButtonStyle} disabled={searchBusy}>
+                  {searchBusy ? "..." : "Suchen"}
+                </button>
+              </div>
             </div>
 
-            <div className="bellWrap">
-              <button className="bellButton" onClick={() => setIsBellOpen((v) => !v)}>
-                🔔
-                {newNotificationCount > 0 ? <span className="bellBadge">{newNotificationCount}</span> : null}
+            <div className="iconOverlayRow">
+              <div style={{ position: "relative" }}>
+                <button className="overlayIconButton" onClick={() => setIsTopOpen((v) => !v)}>
+                  🏆
+                </button>
+
+                {isTopOpen ? (
+                  <div className="floatingDropdownLeft">
+                    <div style={{ fontWeight: 900, marginBottom: 4 }}>Topliste</div>
+
+                    {topSpots.length === 0 ? (
+                      <div className="notificationEmpty">Noch keine Spots vorhanden.</div>
+                    ) : (
+                      topSpots.map((spot, index) => (
+                        <button
+                          key={spot.id}
+                          className="topSpotItem"
+                          onClick={() => {
+                            setFlyTo({ lat: spot.lat, lng: spot.lng });
+                            setIsTopOpen(false);
+                          }}
+                          style={{
+                            border: isPremiumSpot(spot.score)
+                              ? "1px solid rgba(255,215,0,0.45)"
+                              : "1px solid rgba(255,255,255,0.08)",
+                            background: isPremiumSpot(spot.score)
+                              ? "rgba(255,215,0,0.10)"
+                              : "rgba(255,255,255,0.04)",
+                          }}
+                        >
+                          <div style={{ fontWeight: 900 }}>
+                            #{index + 1} {spot.name}
+                          </div>
+                          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                            {spot.score}/10 • von {spot.author || "Unbekannt"}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
+              <button className="overlayIconButton" onClick={zoomToMyLocation}>
+                📍
               </button>
 
-              {isBellOpen ? (
-                <div className="bellDropdown">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    <div style={{ fontWeight: 900 }}>Benachrichtigungen</div>
-                    {notifications.length > 0 ? (
-                      <button onClick={clearNotifications} style={{ ...buttonGhostStyle, padding: "8px 10px" }}>
-                        Schließen
-                      </button>
-                    ) : null}
+              <div style={{ position: "relative", marginLeft: "auto" }}>
+                <button className="overlayIconButton" onClick={() => setIsBellOpen((v) => !v)}>
+                  🔔
+                  {newNotificationCount > 0 ? <span className="bellBadge">{newNotificationCount}</span> : null}
+                </button>
+
+                {isBellOpen ? (
+                  <div className="floatingDropdown">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                      <div style={{ fontWeight: 900 }}>Benachrichtigungen</div>
+                      {notifications.length > 0 ? (
+                        <button onClick={clearNotifications} style={{ ...buttonGhostStyle, padding: "8px 10px" }}>
+                          Schließen
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {notifications.length === 0 ? (
+                      <div className="notificationEmpty">Keine Benachrichtigungen vorhanden.</div>
+                    ) : (
+                      notifications.map((item) => (
+                        <button
+                          key={item.id}
+                          className="notificationItem"
+                          onClick={() => openNotification(item)}
+                          style={{
+                            border: item.isNew
+                              ? "1px solid rgba(255,90,90,0.45)"
+                              : "1px solid rgba(255,255,255,0.08)",
+                            background: item.isNew
+                              ? "rgba(255,90,90,0.08)"
+                              : "rgba(255,255,255,0.04)",
+                          }}
+                        >
+                          <div style={{ fontWeight: item.isNew ? 900 : 700 }}>{item.title}</div>
+                          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                            {new Date(item.timestampMs).toLocaleString("de-DE")}
+                            {item.isNew ? " • neu" : ""}
+                          </div>
+                        </button>
+                      ))
+                    )}
                   </div>
-
-                  {notifications.length === 0 ? (
-                    <div className="notificationEmpty">Keine Benachrichtigungen vorhanden.</div>
-                  ) : (
-                    notifications.map((item) => (
-                      <button
-                        key={item.id}
-                        className="notificationItem"
-                        onClick={() => openNotification(item)}
-                        style={{
-                          border: item.isNew
-                            ? "1px solid rgba(255,90,90,0.45)"
-                            : "1px solid rgba(255,255,255,0.08)",
-                          background: item.isNew
-                            ? "rgba(255,90,90,0.08)"
-                            : "rgba(255,255,255,0.04)",
-                        }}
-                      >
-                        <div style={{ fontWeight: item.isNew ? 900 : 700 }}>{item.title}</div>
-                        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
-                          {new Date(item.timestampMs).toLocaleString("de-DE")}
-                          {item.isNew ? " • neu" : ""}
-                        </div>
-                      </button>
-                    ))
-                  )}
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
+
+            {searchError ? (
+              <div
+                style={{
+                  pointerEvents: "auto",
+                  color: "#ff8a8a",
+                  fontSize: 12,
+                  padding: "8px 12px",
+                  borderRadius: 12,
+                  background: "rgba(20,20,20,0.8)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+              >
+                {searchError}
+              </div>
+            ) : null}
           </div>
 
-          <div className="searchRow">
-            <input
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder='Ort suchen, z. B. "Aral Ingolstadt" oder Adresse'
-              style={{ ...inputStyle, flex: 1 }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") searchAndZoom();
-              }}
-            />
-            <button onClick={searchAndZoom} style={buttonStyle} disabled={searchBusy}>
-              {searchBusy ? "..." : "Suchen"}
-            </button>
-          </div>
-
-          <div className="bottomActionBar">
-            <button onClick={zoomToMyLocation} style={buttonGhostStyle}>
-              Zu meinem Standort
-            </button>
-            <button
-              onClick={() => setFlyTo({ lat: defaultCenter[0], lng: defaultCenter[1] })}
-              style={buttonGhostStyle}
-            >
-              Zurück zum Start
-            </button>
-          </div>
-
-          {searchError ? <div style={{ color: "#ff8a8a", fontSize: 12 }}>{searchError}</div> : null}
-        </div>
-
-        <div className="mapWrap">
           <MapContainer center={defaultCenter} zoom={13} className="mapCanvas">
             <TileLayer
               attribution="&copy; OpenStreetMap"
@@ -816,6 +891,12 @@ export default function MapClient() {
             onClick={openCreateSheet}
           >
             Spot bewerten
+          </button>
+          <button
+            style={buttonGhostStyle}
+            onClick={() => setFlyTo({ lat: defaultCenter[0], lng: defaultCenter[1] })}
+          >
+            Start
           </button>
         </div>
       </div>
@@ -984,6 +1065,16 @@ const buttonGhostStyle: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,0.18)",
   background: "rgba(0,0,0,0.25)",
   color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const overlayActionButtonStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  borderRadius: 14,
+  border: "1px solid rgba(255,255,255,0.18)",
+  background: "white",
+  color: "black",
   fontWeight: 900,
   cursor: "pointer",
 };
